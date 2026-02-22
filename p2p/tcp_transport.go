@@ -137,9 +137,9 @@ func (t *TCPTransport) handleConn(conn net.Conn){
 	// buf := make([]byte,2000)
 	for{
 
-		if err:=t.Decoder.Decode(conn,&rpc);err!=nil{
-			fmt.Printf("TCP error: %s\n",err)
-			continue
+		err:=t.Decoder.Decode(conn,&rpc);
+		if err!=nil{
+			return
 		}
 		// n,err := conn.Read(buf)
 		// if err!=nil{
