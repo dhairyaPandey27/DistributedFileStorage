@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"errors"
 	"fmt"
 	"net"
 )
@@ -72,7 +73,25 @@ func (t *TCPTransport) Consume() <- chan RPC{
 	return t.rpcch
 }
 
- 
+
+func (t *TCPTransport) Close() error{
+
+	return t.listener.Close()
+
+}
+
+func (t *TCPTransport) Dial(addr string) error{
+
+	conn,err := net.Dial("tcp",addr)
+	if err!=nil{
+		return err
+	}
+
+	go t.handleConn(conn,true)
+	return nil
+
+}
+
 func (t *TCPTransport) ListenAndAccept() error {
 
 	var err error
@@ -94,12 +113,15 @@ func (t *TCPTransport) StartAcceptLoop(){
 	for{
 
 		conn,err := t.listener.Accept()
+		if errors.Is(err,net.ErrClosed){
+			return
+		}
 		if err != nil{
 			fmt.Printf("TCP Accept errorL: %s\n",err)
 		}
 		
 	fmt.Printf("new incoming connection %+v\n",conn)
-	go t.handleConn(conn)
+	go t.handleConn(conn,false)
 
 	}
 
@@ -107,7 +129,7 @@ func (t *TCPTransport) StartAcceptLoop(){
 
 type Temp struct{}
 
-func (t *TCPTransport) handleConn(conn net.Conn){
+func (t *TCPTransport) handleConn(conn net.Conn,outbound bool){
 
 	var err error
 
@@ -118,7 +140,7 @@ func (t *TCPTransport) handleConn(conn net.Conn){
 
 	} ()
 
-	peer := NewTCPPeer(conn,true)
+	peer := NewTCPPeer(conn,outbound)
 
 	if err:=t.HandshakeFunc(peer);err!=nil{
 
