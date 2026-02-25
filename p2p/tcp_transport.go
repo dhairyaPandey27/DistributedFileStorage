@@ -4,36 +4,40 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 )
 
 // TCPPeer represents the remote node over a established TCP Connection
 type TCPPeer struct{
 
 	// conn is the underlying connection of the peer
-	conn net.Conn
-
+	net.Conn 
 	// if we dial and retrieve a conn => outbound == true
 	// if we accept and retrieve a conn => outbound == false
-	outbound bool
+	Outbound bool
+
+	Wg *sync.WaitGroup
 
 }
 
 func NewTCPPeer(conn net.Conn,outbound bool) *TCPPeer{
 
 	return &TCPPeer{
-		conn: conn,
-		outbound: outbound,
+		Conn: conn,
+		Outbound: outbound,
+		Wg: &sync.WaitGroup{},
 	}
 
 }
 
 
-// Close implements the Peer interface
-func (p *TCPPeer) Close() error{
+func (p *TCPPeer) Send(b []byte) error{
 
-	return p.conn.Close()
-
+	_,err:=p.Conn.Write(b)
+	return err
 }
+
+
 
 
 type TCPTransportOpts struct{
@@ -120,7 +124,6 @@ func (t *TCPTransport) StartAcceptLoop(){
 			fmt.Printf("TCP Accept errorL: %s\n",err)
 		}
 		
-	fmt.Printf("new incoming connection %+v\n",conn)
 	go t.handleConn(conn,false)
 
 	}
@@ -169,8 +172,12 @@ func (t *TCPTransport) handleConn(conn net.Conn,outbound bool){
 			
 		// }
 
-		rpc.From=conn.RemoteAddr()
+		rpc.From=conn.RemoteAddr().String()
+		peer.Wg.Add(1)
+		fmt.Println("Waiting till stream is done")
 		t.rpcch<-rpc
+		peer.Wg.Wait()
+		fmt.Println("stream done, continuing normal read loop")
 
 	}
 

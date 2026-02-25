@@ -180,7 +180,7 @@ func (s *Store) readStream(key string) (io.ReadCloser, error){
 func (s *Store) writeStream(key string, r io.Reader) error{
 	pathKey := s.PathTransformFunc(key)
 	pathNameWithRoot := fmt.Sprintf("%s/%s",s.root,pathKey.Pathname)
-	
+
 	if err:=os.MkdirAll(pathNameWithRoot,os.ModePerm);err!=nil{
 		return err
 	}
