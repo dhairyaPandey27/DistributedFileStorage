@@ -1,20 +1,21 @@
 package p2p
 
-// import "net"
-
-// RPC holds any arbitrary data that is being sent over the
-// each transport between two nodes in the network
 
 const(
-
+	
 	IncomingMessage = 0x1
 	IncomingStream = 0x2
 
 )
+
+
 // RPC holds any arbitrary data that is being sent over
-// each transport between the nodes
+// each transport between the nodes in the network
 type RPC struct{
+
+	// From holds the remote address of the network
 	From string
-	Payload [] byte 
+	Payload [] byte
+	// Stream tells us whether the Incoming Message is a Message or a Stream
 	Stream bool
 }

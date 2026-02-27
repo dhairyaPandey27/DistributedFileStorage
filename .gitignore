@@ -24,4 +24,5 @@ bin/
 # Go workspace file
 go.work
 
+*_network/
 # End of https://www.toptal.com/developers/gitignore/api/go

@@ -1,5 +1,6 @@
 package main
 
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -9,25 +10,35 @@ import (
 	"log"
 	"sync"
 	"time"
-
-	"github.com/dhairyaPandey27/DistributedFileStorage/p2p"
+	"github.com/dhairyaPandey27/PeerVault/p2p"
 )
+
 
 func init(){
 	gob.Register(MessageStoreFile{})
 	gob.Register(MessageGetFile{})
+	gob.Register(MessageDeleteFile{})
 }
 
+
+// FileServerOpts is a struct that holds the configuration options for the FileServer.
 type FileServerOpts struct {
 
+	Id string
 	EncKey []byte
 	StorageRoot       string
 	PathTransformFunc PathTransformFunc
 	Transport         p2p.Transport
 	BootstrapNodes  []string
+
 }
 
+
+// FileServer is a struct that represents a file server in the distributed file system.
+// It uses FileServerOpts for configuration and has methods to handle file storage
+// retrieval, and deletion, as well as peer management and message broadcasting.
 type FileServer struct{	
+
 	FileServerOpts
 
 	LockPeer sync.Mutex
@@ -35,14 +46,21 @@ type FileServer struct{
 		
 	store *Store
 	quitch chan struct{}
+
 }
 
+
+// NewFileServer creates a new instance of FileServer with the provided options.
 func NewFileServer(opts FileServerOpts) *FileServer {
 
 	storeOpts := StoreOpts{
 
 		root:              opts.StorageRoot,
 		PathTransformFunc: opts.PathTransformFunc,
+	}
+
+	if len(opts.Id)==0{
+		opts.Id = generateID()
 	}
 
 	return &FileServer{
@@ -55,37 +73,44 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 
 }
 
+
+// Message is a struct that represents a message that can be broadcasted to peers in the network.
 type Message struct{
-
+	
 	Payload any
-
+	
 }
 
-type MessageStoreFile struct{
 
+// MessageStoreFile is a struct that represents a message for storing a file in the network.
+type MessageStoreFile struct{
+	
+	Id string
 	Key string
 	Size int64
+	
+}
+
+
+// MessageGetFile is a struct that represents a message for requesting a file from the network.
+type MessageGetFile struct{
+
+	Id string
+	Key string
 
 }
 
 
-func (s *FileServer) Stream(p *Message) error{
+// MessageDeleteFile is a struct that represents a message for deleting a file from the network.
+type MessageDeleteFile struct{
 
-	peers:=[]io.Writer{}
-
-	for _,peer := range s.peers{
-
-		peers = append(peers, peer)
-
-	}
-
-	mw := io.MultiWriter(peers...)
-
-	return gob.NewEncoder(mw).Encode(p)
+	Id string
+	Key string
 
 }
 
 
+// Broadcast sends a message to all known peers in the network by encoding the message and writing it to each peer's connection.
 func (s *FileServer) Broadcast(msg *Message) error{
 
 	buf:=new(bytes.Buffer)
@@ -95,6 +120,7 @@ func (s *FileServer) Broadcast(msg *Message) error{
 
 
 	for _,peer := range s.peers{
+		// First send the "incomingMessage" byte to the peer and then we can send the actual message.
 		peer.Send([]byte{p2p.IncomingMessage})
 		if err:= peer.Send(buf.Bytes());err!=nil{
 			return err
@@ -105,18 +131,47 @@ func (s *FileServer) Broadcast(msg *Message) error{
 
 }
 
-type MessageGetFile struct{
 
-	Key string
+// Delete deletes the file associated with the key for the specified peer ID in the local 
+// storage and if not found in local storage, it broadcasts a delete message to all peers
+// in the network to delete the file from their storage.
+func(s *FileServer) Delete(key string) error{
+
+	if s.store.Has(s.Id,key){
+		s.store.Delete(s.Id,key)
+	}
+
+	fmt.Println("File not present locally, now deleting from all over the network")
+	msg := Message{
+		Payload: MessageDeleteFile{
+
+			Id: s.Id,
+			Key: hashKey(key),
+
+		},
+	}
+
+	if err:=s.Broadcast(& msg); err!=nil{
+		return err
+	}
+
+
+
+	return nil
 
 }
 
+
+// Get retrieves the file associated with the key for the specified peer ID.
+// If the file is present in local storage, it returns a reader for the file.
+// If not, it broadcasts a get message to all peers in the network to fetch
+// the file and then returns a reader for the file once it is received.
 func(s *FileServer) Get(key string) (io.Reader ,error){
 
-	if s.store.Has(key){
+	if s.store.Has(s.Id,key){
 		
 		fmt.Printf("[%s] serving file (%s) from local disk\n",s.Transport.Addr(),key)
-		_,r,err:= s.store.Read(key)
+		_,r,err:= s.store.Read(s.Id,key)
 
 		return r,err
 
@@ -127,7 +182,8 @@ func(s *FileServer) Get(key string) (io.Reader ,error){
 	msg:= Message{
 		Payload: MessageGetFile{
 
-			Key: key,
+			Id: s.Id,
+			Key: hashKey(key),
 
 		},
 	}
@@ -145,7 +201,7 @@ func(s *FileServer) Get(key string) (io.Reader ,error){
 		var fileSize int64
 		binary.Read(peer,binary.LittleEndian,&fileSize)
 		
-		n,err:=s.store.writeDecrypt(s.EncKey,key,io.LimitReader(peer,fileSize))
+		n,err:=s.store.writeDecrypt(s.Id,s.EncKey,key,io.LimitReader(peer,fileSize))
 		if err!=nil{
 			return nil,err
 		}
@@ -156,15 +212,15 @@ func(s *FileServer) Get(key string) (io.Reader ,error){
 	}
 
 
-	_,r,err:= s.store.Read(key)
+	_,r,err:= s.store.Read(s.Id,key)
 	return r,err
 
 }
 
-func(s *FileServer) Store(key string,r io.Reader) error{
 
-	// 1- Store the data to the disk
-	// 2- Broadcast this file to all known peers in the network
+// Store stores the file from the provided reader to the local disk and then 
+// broadcasts a message to all peers in the network to store the file in their local storage as well.
+func(s *FileServer) Store(key string,r io.Reader) error{
 
 	var(
 
@@ -172,7 +228,7 @@ func(s *FileServer) Store(key string,r io.Reader) error{
 		tee =io.TeeReader(r,fileBuffer)	
 
 	)
-	size,err:=s.store.Write(key,tee)
+	size,err:=s.store.Write(s.Id,key,tee)
 	if err!=nil{
 		return err
 	}
@@ -180,7 +236,8 @@ func(s *FileServer) Store(key string,r io.Reader) error{
 
 	msg:= Message{
 		Payload: MessageStoreFile{
-			Key: key,
+			Id: s.Id,
+			Key: hashKey(key),
 			Size: size+16,
 		},
 	}
@@ -209,17 +266,19 @@ func(s *FileServer) Store(key string,r io.Reader) error{
 	
 	return nil
 
-	
-
 }
 
 
+// Stop stops the file server by closing the quit channel and the transport connection.
 func (s *FileServer) Stop(){
 
 	close(s.quitch)
 
 }
 
+
+// onPeer is a callback function that is called when a new peer connects to the file server.
+// It adds the peer to the list of known peers and logs the connection.
 func (s *FileServer) onPeer(p p2p.Peer) error{
 
 	s.LockPeer.Lock()
@@ -236,6 +295,8 @@ func (s *FileServer) onPeer(p p2p.Peer) error{
 }
 
 
+// loop is the main loop of the file server that listens for incoming messages from peers 
+// and handles them accordingly, as well as checking for quit signals to stop the server.
 func (s *FileServer) loop(){
 
 	defer func(){
@@ -250,7 +311,6 @@ func (s *FileServer) loop(){
 		select{
 
 		case rpc:= <-s.Transport.Consume():
-			// fmt.Println("recv msg")
 			var m Message
 			if err:= gob.NewDecoder(bytes.NewReader(rpc.Payload)).Decode(&m);err!=nil{
 				log.Println("Decoding error",err)
@@ -269,6 +329,10 @@ func (s *FileServer) loop(){
 
 }
 
+
+// handleMessage is a function that handles incoming messages from peers by 
+// checking the type of the message payload and calling the appropriate 
+// handler function for storing, retrieving, or deleting files based on the message type.
 func (s *FileServer) handleMessage(from string,msg *Message) error{
 
 	switch v:=msg.Payload.(type){
@@ -276,6 +340,8 @@ func (s *FileServer) handleMessage(from string,msg *Message) error{
 		return s.handleMessageStoreFile(from,v)
 	case MessageGetFile:
 		return s.handleMessageGetFile(from,v)
+	case MessageDeleteFile:
+		return s.handleDeleteFile(from,v)
 	}
 
 
@@ -283,15 +349,33 @@ func (s *FileServer) handleMessage(from string,msg *Message) error{
 }
 
 
+// handleDeleteFile handles the incoming delete file message by checking if the file exists
+// in local storage associated with the ID attached with the msg and deleting it if it does,
+// or logging a message if it does not exist.
+func (s *FileServer) handleDeleteFile(from string,msg MessageDeleteFile) error{
+
+	if s.store.Has(msg.Id,msg.Key){
+		return s.store.Delete(msg.Id,msg.Key)
+	}
+
+	fmt.Println("File is not present in peer")
+
+	return nil
+
+}
+
+
+// handleMessageGetFile handles the incoming get file message by checking if the file exists in local storage
+// associated with the ID attached with the msg and serving it if it does, or logging a message if it does not exist.
 func (s *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error{
 
-	if !s.store.Has(msg.Key){
+	if !s.store.Has(msg.Id,msg.Key){
 		return fmt.Errorf("[%s] Need to serve file (%s) but it does not exist on the disk",s.Transport.Addr(),msg.Key)
 	}
 
 	fmt.Printf("[%s] serving file (%s) over the network\n",s.Transport.Addr(),msg.Key)
 
-	fileSize,r,err:=s.store.Read(msg.Key)
+	fileSize,r,err:=s.store.Read(msg.Id,msg.Key)
 	if err!=nil{
 		return err
 	}
@@ -329,6 +413,7 @@ func (s *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error
 }
 
 
+// handleMessageStoreFile handles the incoming store file message by reading the file data from the peer's connection.
 func (s *FileServer) handleMessageStoreFile(from string,msg MessageStoreFile) error{
 
 	peer,ok:=s.peers[from]
@@ -336,7 +421,7 @@ func (s *FileServer) handleMessageStoreFile(from string,msg MessageStoreFile) er
 		return fmt.Errorf("peer (%s) could not be found in peer list",from)
 	}
 	
-	n,err := s.store.Write(msg.Key,io.LimitReader(peer,msg.Size))
+	n,err := s.store.Write(msg.Id,msg.Key,io.LimitReader(peer,msg.Size))
 	if err!=nil{
 		return err
 	}
@@ -347,6 +432,9 @@ func (s *FileServer) handleMessageStoreFile(from string,msg MessageStoreFile) er
 
 }
 
+
+// bootstrapNetwork is a function that connects to the bootstrap nodes 
+// specified in the FileServer options to join the network and discover other peers.
 func (p *FileServer) bootstrapNetwork() error{
 
 	for _,addr := range p.BootstrapNodes{
@@ -362,13 +450,15 @@ func (p *FileServer) bootstrapNetwork() error{
 			}
 		}(addr)
 
-
 	}
 
 	return nil
 
 }
 
+
+// Start starts the file server by listening for incoming connections and handling them
+// as well as bootstrapping the network and launching the main loop to process incoming messages and quit signals.
 func (s *FileServer) Start() error{
 
 	if err:=s.Transport.ListenAndAccept();err!=nil{

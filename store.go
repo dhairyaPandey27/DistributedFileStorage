@@ -1,20 +1,38 @@
 package main
 
+
 import (
-	// "bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
-	// "io/fs"
 	"log"
 	"os"
 	"strings"
 )
 
+
 const defaultRootFolderName = "ggnetwork"
 
+
+// PathKey is a struct the represents the pathname and filename of a file.
+type PathKey struct{
+
+	Pathname string
+	Filename string
+
+}
+
+
+// PathTransformFunc is a type of function that takes a 
+// string key and return a Pathkey struct.
+type PathTransformFunc func(string) PathKey
+
+
+// CASPathTransformFunc is a default implementation of the PathTransformFunc
+// that transforms a given key into a PathKey. It uses hashing to generate a
+// hash string which is fragmented in fixed block size to get a CAS path.
 func CASPathTransformFunc(key string) PathKey{
 
 	hash:=sha1.Sum([]byte(key))
@@ -38,23 +56,11 @@ func CASPathTransformFunc(key string) PathKey{
 
 	}
 
-
-	// return strings.Join(paths,"/")
-
 }
 
 
-
-type PathTransformFunc func(string) PathKey
-
-
-type PathKey struct{
-
-	Pathname string
-	Filename string
-
-}
-
+// FirstPathName returns the first segment of the Pathname
+//  which is the first directory in the path.
 func (p PathKey) FirstPathName() string{
 
 	paths := strings.Split(p.Pathname,"/")
@@ -67,32 +73,48 @@ func (p PathKey) FirstPathName() string{
 }
 
 
+// FullPath returns the complete path by combining the Pathname and Filename.
 func (p PathKey) FullPath() string{
 
 	return fmt.Sprintf("%s/%s",p.Pathname,p.Filename)
 
 }
 
-type StoreOpts struct {
-	// Root is the folder name of the root,containing all the files/directories
-	// of the system
-	root string
-	PathTransformFunc PathTransformFunc
-}
 
+// DefaultPathTransformFunc is type of PathTransformFunc that
+// return the default values for Pathname and Filename
 var DefaultPathTransformFunc = func(key string) PathKey{
 	return PathKey{
-
+		
 		Pathname: key,
 		Filename: key,
-
+		
 	}
 }
 
+
+// StoreOpts is a struct that contains configuration options for the Store.
+type StoreOpts struct {
+	// root is the folder name of the root,containing all the files/directories
+	// of the system
+	root string
+	// ID of the owner of the storage, which will we be used to store all files at that location
+	// so we can sync all the files if needed
+	ID string
+	PathTransformFunc PathTransformFunc
+}
+
+
+// Store is a struct that is used for storing and retrieving files
+// and it used the StoreOpts for configuration.
 type Store struct {
 	StoreOpts
 }
 
+
+// NewStore creates a new instance of Store with the provided options
+// and also sets default values for the root folder name, ID
+// and PathTransformFunc if they are not provided in the options.
 func NewStore(opts StoreOpts) *Store {
 
 	if opts.PathTransformFunc==nil{
@@ -103,16 +125,22 @@ func NewStore(opts StoreOpts) *Store {
 		opts.root=defaultRootFolderName
 	}
 
+	if len(opts.ID)==0{
+		opts.ID=generateID()
+	}
+
 	return &Store{
 
 		StoreOpts: opts,	}
 
 }
 
-func (s *Store) Has(key string) bool{
+
+// Has checks if a file with the given key exists for the specified peer ID in the storage.
+func (s *Store) Has(id string,key string) bool{
 
 	pathKey := s.PathTransformFunc(key)
-	fullPathWithRoot := fmt.Sprintf("%s/%s",s.root,pathKey.FullPath())
+	fullPathWithRoot := fmt.Sprintf("%s/%s/%s",s.root,id,pathKey.FullPath())
 	_,err:=os.Stat(fullPathWithRoot)
 
 	if errors.Is(err,os.ErrNotExist){
@@ -124,6 +152,7 @@ func (s *Store) Has(key string) bool{
 } 
 
 
+// Clear removes all files and directories in the root folder of the storage, effectively clearing the storage.
 func (s *Store) Clear() error{
 
 	return os.RemoveAll(s.root)
@@ -131,10 +160,11 @@ func (s *Store) Clear() error{
 }
 
 
-func (s *Store) Delete(key string) error{
+// Delete removes the file associated with the given key for the specified peer ID from the storage.
+func (s *Store) Delete(id string,key string) error{
 
 	pathKey:=s.PathTransformFunc(key)
-	FullPathwithRoot := fmt.Sprintf("%s/%s",s.root,pathKey.FirstPathName())
+	FullPathwithRoot := fmt.Sprintf("%s/%s/%s",s.root,id,pathKey.FirstPathName())
 
 	defer func(){
 		log.Printf("Deleted [%s] from disk", pathKey.Filename)
@@ -145,24 +175,26 @@ func (s *Store) Delete(key string) error{
 }
 
 
-func (s *Store) Write(key string,r io.Reader) (int64,error){
+func (s *Store) Write(id string,key string,r io.Reader) (int64,error){
 
-	return s.writeStream(key,r)
-
-}
-
-
-func (s *Store) Read(key string) (int64,io.Reader, error){
-
-	return s.readStream(key)
+	return s.writeStream(id,key,r)
 
 }
 
 
-func (s *Store) readStream(key string) (int64,io.ReadCloser, error){
+func (s *Store) Read(id string,key string) (int64,io.Reader, error){
+
+	return s.readStream(id,key)
+
+}
+
+
+// readStream reads the file associated with the given key for the
+// specified peer ID from the storage and returns its size and a reader for the file.
+func (s *Store) readStream(id string,key string) (int64,io.ReadCloser, error){
 
 	pathKey := s.PathTransformFunc(key)
-	fullPathnameWithRoot := fmt.Sprintf("%s/%s",s.root,pathKey.FullPath())
+	fullPathnameWithRoot := fmt.Sprintf("%s/%s/%s",s.root,id,pathKey.FullPath())
    	file,err := os.Open(fullPathnameWithRoot)
 	if err!=nil{
 		return 0,nil,err
@@ -177,9 +209,11 @@ func (s *Store) readStream(key string) (int64,io.ReadCloser, error){
 
 }
 
-func (s *Store) writeDecrypt(encKey []byte,key string, r io.Reader) (int64,error){
 
-	f,err:= s.openFileForWriting(key)
+// writeDecrypt reads encrypted data from the provided reader, decrypts it using the provided encryption key
+func (s *Store) writeDecrypt(id string,encKey []byte,key string, r io.Reader) (int64,error){
+
+	f,err:= s.openFileForWriting(id,key)
 	if err!=nil{
 		return 0,err
 	}
@@ -190,24 +224,29 @@ func (s *Store) writeDecrypt(encKey []byte,key string, r io.Reader) (int64,error
 
 }
 
-func (s *Store) openFileForWriting(key string) (*os.File,error){
+
+// openFileForWriting is a helper function that creates and opens a file 
+// for writing based on the given peer ID and key, and returns the file handle.
+func (s *Store) openFileForWriting(id string,key string) (*os.File,error){
 
 	pathKey := s.PathTransformFunc(key)
-	pathNameWithRoot := fmt.Sprintf("%s/%s",s.root,pathKey.Pathname)
+	pathNameWithRoot := fmt.Sprintf("%s/%s/%s",s.root,id,pathKey.Pathname)
 
 	if err:=os.MkdirAll(pathNameWithRoot,os.ModePerm);err!=nil{
 		return nil,err
 	}
 
-	fullPathNamewithRoot:=fmt.Sprintf("%s/%s",s.root,pathKey.FullPath())	
+	fullPathNamewithRoot:=fmt.Sprintf("%s/%s/%s",s.root,id,pathKey.FullPath())	
 
 	return os.Create(fullPathNamewithRoot)
 
 }
 
-func (s *Store) writeStream(key string, r io.Reader) (int64,error){
 
-	f,err:=s.openFileForWriting(key)
+// writeStream writes data from the provided reader to a file associated with the given key for the specified peer ID in the storage.
+func (s *Store) writeStream(id string,key string, r io.Reader) (int64,error){
+
+	f,err:=s.openFileForWriting(id,key)
 	if err!=nil{
 		return 0,err
 	}

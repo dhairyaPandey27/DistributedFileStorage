@@ -1,4 +1,4 @@
-module github.com/dhairyaPandey27/DistributedFileStorage
+module github.com/dhairyaPandey27/PeerVault
 
 go 1.24.0
 

@@ -1,17 +1,11 @@
 package main
 
+
 import (
 	"bytes"
-	// "fmt"
-	"io/ioutil"
-
-	// "fmt"
+	"io"
 	"testing"
 )
-
-
-
-
 
 
 func TestPathTransformFunc(t *testing.T){
@@ -27,57 +21,46 @@ func TestPathTransformFunc(t *testing.T){
 }
 
 
-
-
-func TestStoreDeleteKey(t *testing.T){
-
-	s:=newStore()
-	key:="momsspecial"
-
-	data := []byte("some jpeg bytes")
-	if _,err := s.Write(key,bytes.NewReader(data));err!=nil{
-		t.Error(err)
-	}
-
-	if err:=s.Delete(key);err!=nil{
-		t.Error(err)
-	}
-
-}
-
-
-
 func TestStore(t *testing.T){
 
 	s:=newStore()
 	defer teardown(t,s)
 
+	id:=generateID()
+
 	key:="momsspecial"
 
 	data := []byte("some jpeg bytes")
-	if _,err := s.Write(key,bytes.NewReader(data));err!=nil{
+	if _,err := s.Write(id,key,bytes.NewReader(data));err!=nil{
 		t.Error(err)
 	}
 
-	if ok:=s.Has(key);!ok{
+	if ok:=s.Has(id,key);!ok{
 		t.Errorf("Expected to have key %s",key)
 	}
 
-	_,r,err:=s.Read(key)
+	_,r,err:=s.Read(id,key)
 	if err!=nil{
 		t.Error(err)
 	}
 
-	b,_:=ioutil.ReadAll(r)
-
-
-
+	b,_:=io.ReadAll(r)
 	if(string(b)!=string(data)){
 		t.Errorf("want %s have %s",data,b)
 	}
-	s.Delete(key)
+
+	if err:=s.Delete(id,key);err!=nil{
+		t.Error(err)
+	}
+
+	if ok:=s.Has(id,key);ok{
+		t.Errorf("Expected to not have key %s",key)
+	}
+
+
 
 }
+
 
 func newStore() *Store{
 
@@ -88,6 +71,7 @@ func newStore() *Store{
 	return NewStore(opts)
 
 }
+
 
 func teardown(t *testing.T, s *Store){
 
