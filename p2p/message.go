@@ -5,7 +5,16 @@ package p2p
 // RPC holds any arbitrary data that is being sent over the
 // each transport between two nodes in the network
 
+const(
+
+	IncomingMessage = 0x1
+	IncomingStream = 0x2
+
+)
+// RPC holds any arbitrary data that is being sent over
+// each transport between the nodes
 type RPC struct{
 	From string
 	Payload [] byte 
+	Stream bool
 }

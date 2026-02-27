@@ -35,7 +35,7 @@ func TestStoreDeleteKey(t *testing.T){
 	key:="momsspecial"
 
 	data := []byte("some jpeg bytes")
-	if err := s.Write(key,bytes.NewReader(data));err!=nil{
+	if _,err := s.Write(key,bytes.NewReader(data));err!=nil{
 		t.Error(err)
 	}
 
@@ -55,7 +55,7 @@ func TestStore(t *testing.T){
 	key:="momsspecial"
 
 	data := []byte("some jpeg bytes")
-	if err := s.Write(key,bytes.NewReader(data));err!=nil{
+	if _,err := s.Write(key,bytes.NewReader(data));err!=nil{
 		t.Error(err)
 	}
 
@@ -63,7 +63,7 @@ func TestStore(t *testing.T){
 		t.Errorf("Expected to have key %s",key)
 	}
 
-	r,err:=s.Read(key)
+	_,r,err:=s.Read(key)
 	if err!=nil{
 		t.Error(err)
 	}
